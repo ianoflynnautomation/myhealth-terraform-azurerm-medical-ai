@@ -1,0 +1,66 @@
+name: terraform-quality
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "**/*.tf"
+      - "**/*.tfvars"
+      - ".tflint.hcl"
+      - ".github/workflows/terraform-quality.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TF_VERSION: "1.15.3"
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
+jobs:
+  quality:
+    name: fmt, validate, tflint
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Terraform fmt
+        run: terraform fmt -check -recursive -diff
+
+      - name: Terraform init
+        run: terraform init -backend=false
+
+      - name: Terraform validate
+        run: terraform validate
+
+      - uses: terraform-linters/setup-tflint@90f302c255ef959cbfb4bd10581afecdb7ece3e6 # v4
+        with:
+          tflint_version: v0.53.0
+
+      - name: TFLint
+        run: |
+          set -euo pipefail
+          tflint --init --config="$(pwd)/.tflint.hcl"
+          tflint --config="$(pwd)/.tflint.hcl" --var-file=environments/dev/example.tfvars
+
+  unit-test:
+    name: Terraform unit tests
+    permissions:
+      contents: read
+    uses: ./.github/workflows/terraform-test.yml
+    with:
+      terraform-version: "1.15.3"
+      working-directory: "."

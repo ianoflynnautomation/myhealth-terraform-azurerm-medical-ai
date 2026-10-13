@@ -1,0 +1,10 @@
+# Default owners for everything
+*    @ianoflynnautomation
+
+/modules/ @ianoflynnautomation
+/environments/dev/ @ianoflynnautomation
+/environments/staging/ @ianoflynnautomation
+/environments/prod/ @ianoflynnautomation
+/.github/ @ianoflynnautomation
+/docs/ @ianoflynnautomation
+/README.md @ianoflynnautomation

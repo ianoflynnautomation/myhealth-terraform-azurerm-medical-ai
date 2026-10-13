@@ -1,0 +1,87 @@
+name: terraform-test
+
+# Native `terraform test` (plan-only, mocked providers). No Azure credentials
+# — the suite in tests/*.tftest.hcl stubs child modules and never applies.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "**/*.tf"
+      - "**/*.tftest.hcl"
+      - ".terraform.lock.hcl"
+      - "tests/**"
+      - ".github/workflows/terraform-test.yml"
+  workflow_dispatch:
+    inputs:
+      working-directory:
+        description: "Directory to run terraform test in"
+        type: string
+        default: "."
+  workflow_call:
+    inputs:
+      terraform-version:
+        description: Terraform version
+        type: string
+        required: false
+        default: "1.15.3"
+      working-directory:
+        description: Working directory for init/test
+        type: string
+        required: false
+        default: "."
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terraform-test-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TF_VERSION: ${{ inputs.terraform-version || '1.15.3' }}
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
+jobs:
+  test:
+    name: Terraform unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory || '.' }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Prepare plugin cache directory
+        run: mkdir -p "$HOME/.terraform.d/plugin-cache"
+
+      - name: Cache Terraform plugins
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.terraform.d/plugin-cache
+          key: ${{ runner.os }}-tfplugins-${{ env.TF_VERSION }}-${{ hashFiles('.terraform.lock.hcl') }}
+          restore-keys: |
+            ${{ runner.os }}-tfplugins-${{ env.TF_VERSION }}-
+            ${{ runner.os }}-tfplugins-
+
+      - name: Configure plugin cache
+        run: echo "TF_PLUGIN_CACHE_DIR=$HOME/.terraform.d/plugin-cache" >> "$GITHUB_ENV"
+
+      - name: Terraform init
+        run: |
+          set -euo pipefail
+          terraform init -backend=false
+
+      - name: Terraform test
+        run: |
+          set -euo pipefail
+          terraform test

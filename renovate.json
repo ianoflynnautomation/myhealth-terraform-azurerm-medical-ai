@@ -1,0 +1,66 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommits",
+    ":semanticCommitTypeAll(chore)",
+    ":prHourlyLimit4",
+    ":prConcurrentLimit10",
+    "helpers:pinGitHubActionDigests"
+  ],
+  "labels": ["dependencies", "renovate"],
+  "timezone": "Europe/Dublin",
+  "schedule": ["after 6am and before 10pm every weekday"],
+  "dependencyDashboardTitle": "Dependency Dashboard (Terraform modules & providers)",
+  "commitMessagePrefix": "chore(deps):",
+  "enabledManagers": [
+    "terraform",
+    "github-actions"
+  ],
+  "terraform": {
+    "managerFilePatterns": ["/\\.tf$/"]
+  },
+  "github-actions": {
+    "managerFilePatterns": ["/(^|/)\\.github/workflows/[^/]+\\.ya?ml$/"]
+  },
+  "packageRules": [
+    {
+      "description": "AVM registry modules: one PR each, never automerge — plans gate promotion",
+      "matchManagers": ["terraform"],
+      "matchDatasources": ["terraform-module"],
+      "addLabels": ["terraform-module"],
+      "automerge": false
+    },
+    {
+      "description": "AVM modules are pre-1.0 — treat minor bumps as potentially breaking, require dashboard approval",
+      "matchManagers": ["terraform"],
+      "matchDatasources": ["terraform-module"],
+      "matchPackageNames": ["Azure/**"],
+      "matchCurrentVersion": "<1.0.0",
+      "matchUpdateTypes": ["minor"],
+      "dependencyDashboardApproval": true,
+      "addLabels": ["avm-pre-1.0-minor"]
+    },
+    {
+      "description": "Terraform providers — group patch/minor to reduce PR noise",
+      "matchManagers": ["terraform"],
+      "matchDatasources": ["terraform-provider"],
+      "matchUpdateTypes": ["patch", "minor"],
+      "groupName": "terraform-providers (non-major)",
+      "automerge": false
+    },
+    {
+      "description": "Major updates always need explicit review",
+      "matchUpdateTypes": ["major"],
+      "automerge": false,
+      "dependencyDashboardApproval": true,
+      "addLabels": ["major-update"]
+    }
+  ],
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "labels": ["security"]
+  },
+  "osvVulnerabilityAlerts": true
+}

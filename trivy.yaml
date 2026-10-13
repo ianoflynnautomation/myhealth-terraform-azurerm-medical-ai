@@ -1,0 +1,3 @@
+misconfiguration:
+  skip-dirs:
+    - .terraform
