@@ -3,9 +3,6 @@ locals {
   nat_gateway_public_ip_name = coalesce(var.nat_gateway_public_ip_name, "pip-natgw-${var.environment}-${var.location_short_name}")
   nat_gateway_public_ip_sku  = var.nat_gateway_sku_name == "StandardV2" ? "StandardV2" : "Standard"
 
-  # NAT is created first and associated here so the app subnet has egress
-  # while default_outbound_access_enabled stays false (no implicit Azure
-  # SNAT). The private-endpoint subnet is inbound-only and is not NATed.
   subnets = {
     app = merge(
       {

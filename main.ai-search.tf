@@ -1,6 +1,4 @@
 locals {
-  # The only identity the Search service has (ADR-0008). Every Search grant
-  # targets this, from main.security.tf.
   search_principal_id = one(module.ai_search.resource.identity).principal_id
 
   search_private_endpoints = var.enable_private_endpoints ? {
@@ -31,8 +29,6 @@ module "ai_search" {
   source  = "Azure/avm-res-search-searchservice/azurerm"
   version = "0.3.0"
 
-  # search_location lets Search sit outside the primary region when that
-  # region has no Search capacity (ADR-0007).
   location            = coalesce(var.search_location, module.rg.location)
   name                = var.search_name
   resource_group_name = module.rg.name
@@ -42,17 +38,12 @@ module "ai_search" {
   semantic_search_sku = var.search_semantic_search_sku
   hosting_mode        = var.search_hosting_mode
 
-  # API keys disabled: RAG indexers and Foundry connections authenticate
-  # with the search user-assigned identity plus RBAC roles above.
   local_authentication_enabled  = false
   public_network_access_enabled = local.public_data_plane || var.search_public_network_access_enabled
   network_rule_bypass_option    = "AzureServices"
   enable_telemetry              = var.enable_telemetry
   tags                          = local.tags
 
-  # System-assigned only, deliberately: the module silently ignores
-  # user_assigned_resource_ids, so a UAMI here would leave the service with no
-  # usable identity for its own grants. See ADR-0008.
   managed_identities = {
     system_assigned = true
   }

@@ -1,11 +1,3 @@
-# Cross-resource RBAC that cannot live on the target module without creating
-# a cycle (the identity exists before the target, but some bindings are
-# easier to read in one place). Module-level role_assignments cover the
-# common paths; this file is the remainder.
-
-# AI Search runs on its system-assigned identity (ADR-0008). Its grants live
-# here, not in each target module: the Key Vault one would otherwise cycle
-# (ai_search consumes key_vault for CMK), and one list is easier to review.
 resource "azurerm_role_assignment" "search_reads_blobs" {
   scope                = module.storage.resource_id
   role_definition_name = "Storage Blob Data Reader"

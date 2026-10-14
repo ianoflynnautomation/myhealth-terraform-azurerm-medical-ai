@@ -2,29 +2,28 @@
 #
 # One root module, three environments. Everything is driven by ENV:
 #
-#   make plan ENV=dev          # or the shorthand: make plan-dev
+#   make plan ENV=dev
 #   make apply ENV=staging CONFIRM=staging
 #
 # Environments differ only by environments/<env>/{backend.hcl,terraform.tfvars}.
 # Promotion is always dev -> staging -> prod.
 #
-# A NEW (or freshly destroyed) environment needs "make bootstrap" first: the
+# A new (or freshly destroyed) environment needs "make bootstrap" first: the
 # Foundry pattern module cannot plan until the user-assigned identities exist,
 # so pass 1 applies with enable_foundry=false. See docs/adr/0006. "make plan"
 # on an empty state fails with "Invalid for_each argument" until it has run.
 #
-# Apply/destroy against staging or prod is gated behind CONFIRM=<env>; those
-# environments are meant to go through workflow_dispatch with GitHub
-# Environment reviewers, not a laptop (see AGENTS.md hard rules).
+# Apply, destroy, and the other mutating targets against staging or prod are
+# gated behind CONFIRM=<env>. Those environments go through workflow_dispatch
+# with GitHub Environment reviewers, not a laptop (see AGENTS.md).
 
 SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
 .DEFAULT_GOAL := help
 
-TF        ?= terraform
-AZ        ?= az
-KUBELOGIN ?= kubelogin
-TFLINT    ?= tflint
+TF     ?= terraform
+AZ     ?= az
+TFLINT ?= tflint
 
 ENV  ?= dev
 ENVS := dev staging prod
@@ -40,19 +39,6 @@ PLAN    := tfplan.$(ENV)
 
 # Extra flags appended to terraform invocations, e.g. make plan ARGS="-target=..."
 ARGS ?=
-
-# Azure resource names are read out of the tfvars so there is a single source of
-# truth (and no subscription/tenant IDs committed to this public repo).
-tfvar = $(shell sed -nE 's/^[[:space:]]*$(1)[[:space:]]*=[[:space:]]*"([^"]*)".*/\1/p' $(TFVARS) 2>/dev/null | head -n1)
-
-ENV_SHORT_dev     := dev
-ENV_SHORT_staging := stg
-ENV_SHORT_prod    := prod
-ENV_SHORT          = $(ENV_SHORT_$(ENV))
-
-RESOURCE_GROUP  ?= $(or $(call tfvar,resource_group_name),rg-bjjeire-$(ENV_SHORT)-sdc-01)
-CLUSTER_NAME    ?= $(or $(call tfvar,aks_cluster_name),aks-bjjeire-$(ENV_SHORT)-sdc-01)
-SUBSCRIPTION_ID ?= $(call tfvar,subscription_id)
 
 # --- guards -----------------------------------------------------------------
 
@@ -106,22 +92,11 @@ show: ## terraform show tfplan.<ENV>
 	@test -f $(PLAN) || { printf 'no %s — run "make plan ENV=%s" first\n' "$(PLAN)" "$(ENV)" >&2; exit 1; }
 	$(TF) show $(PLAN) $(ARGS)
 
-.PHONY: show-json
-show-json: ## terraform show -json tfplan.<ENV> (for jq / set-diff analysis)
-	@test -f $(PLAN) || { printf 'no %s — run "make plan ENV=%s" first\n' "$(PLAN)" "$(ENV)" >&2; exit 1; }
-	@$(TF) show -json $(PLAN)
-
 .PHONY: apply
 apply: ## terraform apply tfplan.<ENV> (the saved plan)
 	$(require_confirm)
 	@test -f $(PLAN) || { printf 'no %s — run "make plan ENV=%s" first\n' "$(PLAN)" "$(ENV)" >&2; exit 1; }
 	$(TF) apply $(PLAN) $(ARGS)
-
-.PHONY: apply-auto
-apply-auto: ## terraform apply -auto-approve (no saved plan)
-	$(require_confirm)
-	$(call require_files,$(TFVARS))
-	$(TF) apply -var-file=$(TFVARS) -auto-approve $(ARGS)
 
 .PHONY: destroy
 destroy: ## terraform destroy -auto-approve, then purge soft-deleted remnants
@@ -140,19 +115,27 @@ destroy: ## terraform destroy -auto-approve, then purge soft-deleted remnants
 .PHONY: purge
 purge: ## purge soft-deleted remnants for ENV (irreversible; run after destroy)
 	$(require_confirm)
-	@printf 'Purging soft-deleted remnants for ENV=%s. This is irreversible.\n' "$(ENV)"
-	@l="$(call tfvar,location)"; \
-	for n in "$(call tfvar,document_intelligence_name)" "$(call tfvar,foundry_name)"; do \
-	  test -n "$$n" || continue; \
-	  if $(AZ) cognitiveservices account purge --name "$$n" --resource-group "$(RESOURCE_GROUP)" --location "$$l" -o none 2>/dev/null; then \
+	$(call require_files,$(TFVARS))
+	@tfvar() { sed -nE "s/^[[:space:]]*$$1[[:space:]]*=[[:space:]]*\"([^\"]*)\".*/\1/p" "$(TFVARS)" | head -n 1 || true; }; \
+	rg="$$(tfvar resource_group_name)"; \
+	loc="$$(tfvar location)"; \
+	if [ -z "$$rg" ] || [ -z "$$loc" ]; then \
+	  printf 'resource_group_name and location must be set in %s\n' "$(TFVARS)" >&2; \
+	  exit 1; \
+	fi; \
+	printf 'Purging soft-deleted remnants for ENV=%s. This is irreversible.\n' "$(ENV)"; \
+	for key in document_intelligence_name foundry_name; do \
+	  n="$$(tfvar "$$key")"; \
+	  [ -n "$$n" ] || continue; \
+	  if $(AZ) cognitiveservices account purge --name "$$n" --resource-group "$$rg" --location "$$loc" -o none 2>/dev/null; then \
 	    printf '  purged cognitive account %s\n' "$$n"; \
 	  else \
 	    printf '  nothing to purge for cognitive account %s\n' "$$n"; \
 	  fi; \
-	done
-	@n="$(call tfvar,kv_name)"; l="$(call tfvar,location)"; \
+	done; \
+	n="$$(tfvar kv_name)"; \
 	if [ -n "$$n" ]; then \
-	  if $(AZ) keyvault purge --name "$$n" --location "$$l" -o none 2>/dev/null; then \
+	  if $(AZ) keyvault purge --name "$$n" --location "$$loc" -o none 2>/dev/null; then \
 	    printf '  purged key vault %s\n' "$$n"; \
 	  else \
 	    printf '  key vault %s not purged (purge protection on, or not soft-deleted)\n' "$$n"; \
@@ -181,26 +164,16 @@ force-unlock: ## release a stuck state lock: make force-unlock ENV=dev LOCK_ID=<
 output: ## terraform output for ENV
 	$(TF) output $(ARGS)
 
-# --- azure / kubernetes -----------------------------------------------------
+# --- azure ------------------------------------------------------------------
 
 .PHONY: login
-login: ## az login (and select the subscription from the ENV tfvars)
+login: ## az login, then select the subscription from the ENV tfvars
+	$(call require_files,$(TFVARS))
 	$(AZ) login
-	@if [ -n "$(SUBSCRIPTION_ID)" ]; then $(AZ) account set --subscription $(SUBSCRIPTION_ID); fi
-	@$(AZ) account show --query '{name:name, id:id, tenant:tenantId}' -o yaml
-
-.PHONY: kubeconfig
-kubeconfig: ## az aks get-credentials + kubelogin convert-kubeconfig for ENV
-	$(AZ) aks get-credentials \
-		--resource-group $(RESOURCE_GROUP) \
-		--name $(CLUSTER_NAME) \
-		--overwrite-existing
-	$(KUBELOGIN) convert-kubeconfig -l azurecli
-
-.PHONY: kube-context
-kube-context: ## show the current kube context and nodes
-	@kubectl config current-context
-	@kubectl get nodes -o wide
+	@sub=$$(sed -nE 's/^[[:space:]]*subscription_id[[:space:]]*=[[:space:]]*"([^"]*)".*/\1/p' "$(TFVARS)" | head -n 1 || true); \
+	test -n "$$sub" || { printf 'subscription_id is not set in %s\n' "$(TFVARS)" >&2; exit 1; }; \
+	$(AZ) account set --subscription "$$sub"; \
+	$(AZ) account show --query name -o tsv
 
 # --- quality ----------------------------------------------------------------
 
@@ -243,25 +216,12 @@ clean-all: clean ## also remove .terraform/ (requires a fresh init)
 
 .PHONY: env
 env: ## print the resolved settings for ENV
-	@printf '%-16s %s\n' ENV "$(ENV)" BACKEND "$(BACKEND)" TFVARS "$(TFVARS)" \
-		PLAN "$(PLAN)" RESOURCE_GROUP "$(RESOURCE_GROUP)" CLUSTER_NAME "$(CLUSTER_NAME)"
-
-# --- per-environment shorthands: <target>-<env> ------------------------------
-
-ENV_TARGETS := init init-upgrade bootstrap plan plan-destroy show show-json apply apply-auto \
-               destroy purge refresh force-unlock output login kubeconfig test env
-
-define env_alias
-.PHONY: $(1)-$(2)
-$(1)-$(2):
-	@$$(MAKE) --no-print-directory $(1) ENV=$(2)
-endef
-$(foreach e,$(ENVS),$(foreach t,$(ENV_TARGETS),$(eval $(call env_alias,$(t),$(e)))))
+	@printf '%-8s %s\n' ENV "$(ENV)" BACKEND "$(BACKEND)" TFVARS "$(TFVARS)" PLAN "$(PLAN)"
 
 .PHONY: help
 help: ## this list
 	@printf 'medical-ai-pipeline terraform — ENV=%s (one of: %s)\n\n' "$(ENV)" "$(ENVS)"
 	@grep -hE '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) \
 		| awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
-	@printf '\nShorthands: %s\n' "$$(printf '<target>-{%s}' "$$(echo $(ENVS) | tr ' ' ',')")"
-	@printf 'Guarded:    apply, apply-auto, destroy, refresh, force-unlock need CONFIRM=<env> when ENV != dev\n'
+	@printf '\nGuarded (need CONFIRM=<env> when ENV is not dev):\n'
+	@printf '  bootstrap, apply, destroy, purge, refresh, force-unlock\n'

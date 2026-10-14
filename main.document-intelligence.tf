@@ -19,9 +19,6 @@ locals {
   }
 }
 
-# Azure AI Document Intelligence (FormRecognizer kind). Custom subdomain is
-# required for private endpoints and Entra token auth; local API keys are
-# disabled so callers must use the attached user-assigned identity.
 module "document_intelligence" {
   source  = "Azure/avm-res-cognitiveservices-account/azurerm"
   version = "0.11.1"

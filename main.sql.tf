@@ -76,9 +76,6 @@ module "sql" {
   role_assignments    = local.sql_role_assignments
 }
 
-# Audit events stream to Log Analytics (no storage account keys). The
-# SQLSecurityAuditEvents category on the master database is the HIPAA
-# control; retention is the Log Analytics workspace retention.
 resource "azurerm_mssql_server_extended_auditing_policy" "this" {
   count = var.enable_sql ? 1 : 0
 

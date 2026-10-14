@@ -1,9 +1,6 @@
 locals {
   foundry_project_key = "medical"
 
-  # Project connections are all-or-nothing in the pattern module and the
-  # Cosmos scope is not optional, so with enable_cosmos = false the plan fails
-  # on a null role-assignment scope. Connections follow Cosmos (ADR-0005).
   foundry_project_connections = var.enable_cosmos
 
   foundry_role_assignments = {
@@ -18,10 +15,6 @@ locals {
   }
 }
 
-# BYOR: Key Vault, Storage, AI Search, and Cosmos are owned by this root
-# module (ADR-0004). The Foundry pattern module only creates the AI
-# Services account, project, model deployments, and the private endpoint
-# on the Foundry account itself.
 module "ai_foundry" {
   count = var.enable_foundry ? 1 : 0
 
@@ -65,9 +58,7 @@ module "ai_foundry" {
       default_action = local.public_data_plane ? "Allow" : "Deny"
       bypass         = "AzureServices"
     }
-    # The CMK identity is attached by the module from customer_managed_key.
-    # Listing it here too would also grant it the Cosmos and Storage
-    # data-plane roles the Standard Agent Setup gives every account identity.
+    
     managed_identities = {
       system_assigned = false
       user_assigned_resource_ids = toset([
